@@ -1,6 +1,7 @@
+cabal-version:       3.0
 name:                fit
-version:             0.5.1
-license:             BSD3
+version:             0.5.2
+license:             BSD-3-Clause
 license-file:        LICENSE
 author:              Matt Giles
 maintainer:          matt.w.giles@gmail.com
@@ -26,7 +27,6 @@ description:
 category:            Data, Parsing, Fitness
 stability:           experimental
 build-type:          Simple
-cabal-version:       >=1.10
 
 bug-reports:         https://github.com/mgiles/fit/issues
 source-repository head
@@ -44,8 +44,8 @@ library
                      , Fit.Internal.Numbers
                      , Fit.Internal.Parse
   ghc-options:         -Wall
-  build-depends:       base >=4.7 && <4.9
-                     , attoparsec >= 0.10.3
+  build-depends:       base  ^>=4.15.1.0
+                     , attoparsec >= 0.13.2.3
                      , bytestring
                      , text
                      , mtl >= 1.1
@@ -56,9 +56,13 @@ library
 test-suite test-fit
   type:              exitcode-stdio-1.0
   main-is:           test/TestFit.hs
+  other-modules:
+    Test.Fit.Internal.FitFile
+    Test.Fit.Internal.FitParser
+    Test.Fit.Internal.Numbers
   default-language:  Haskell2010
   ghc-options:       -Wall
-  build-depends:      base >=4.7 && <4.9
+  build-depends:      base  ^>=4.15.1.0
                     , fit
                     , hspec
                     , hspec-attoparsec
