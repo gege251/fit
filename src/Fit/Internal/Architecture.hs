@@ -1,4 +1,7 @@
-{-|
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+
+{- |
 Module      : Fit.Internal.Architecture
 Copyright   : Copyright 2014-2015, Matt Giles
 License     : Modified BSD License (see LICENSE file)
@@ -10,28 +13,24 @@ can vary throughout the file. This module provides some helper types for using p
 with the correct endian-ness during the parse. See the "Fit.Internal.Numbers" and
 "Fit.Internal.FitParser" modules for example use.
 -}
-
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE DataKinds #-}
-
 module Fit.Internal.Architecture (
-  Arch(..),
-  WithArch(..),
+  Arch (..),
+  WithArch (..),
   LittleEndian,
   BigEndian,
   withLE,
-  withBE
-  ) where
+  withBE,
+) where
 
-import Control.Applicative
 import Prelude
 
-data Arch = ArchLittle
-          | ArchBig
-          deriving (Show, Eq)
+data Arch
+  = ArchLittle
+  | ArchBig
+  deriving (Show, Eq)
 
 -- | Tag a value for use in a little- or big-endian context (with 'ArchLittle' and 'ArchBig', respectively)
-newtype WithArch (a :: Arch) b = WithArch { unArch :: b }
+newtype WithArch (a :: Arch) b = WithArch {unArch :: b}
 
 instance Functor (WithArch a) where
   fmap f (WithArch x) = WithArch (f x)

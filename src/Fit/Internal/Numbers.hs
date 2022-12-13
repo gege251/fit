@@ -1,4 +1,4 @@
-{-|
+{- |
 Module      : Fit.Internal.Numbers
 Copyright   : Copyright 2014-2015, Matt Giles
 License     : Modified BSD License (see LICENSE file)
@@ -10,7 +10,6 @@ for single-precision and double-precision floating point numbers.
 
 The parsers are tagged for endianness using the tools in "Fit.Internal.Architecture".
 -}
-
 module Fit.Internal.Numbers (
   -- * Little-endian parsers
   int16le,
@@ -34,24 +33,19 @@ module Fit.Internal.Numbers (
 
   -- * Helpers
   nByteIntLe,
-  nByteIntBe
-  ) where
-
-import Fit.Internal.Architecture
+  nByteIntBe,
+) where
 
 import Control.Applicative
-
-import Data.Int (Int16, Int32, Int64)
-import Data.Bits (Bits, shiftL, FiniteBits, finiteBitSize)
-import Data.Word (Word16, Word32, Word64)
-
 import Data.Attoparsec.ByteString (Parser)
 import qualified Data.Attoparsec.ByteString as A (take)
-import qualified Data.ByteString as B (foldr, foldl')
-
-import qualified Foreign as F (alloca, poke, peek, castPtr)
+import Data.Bits (Bits, FiniteBits, finiteBitSize, shiftL)
+import qualified Data.ByteString as B (foldl', foldr)
+import Data.Int (Int16, Int32, Int64)
+import Data.Word (Word16, Word32, Word64)
+import Fit.Internal.Architecture
+import qualified Foreign as F (alloca, castPtr, peek, poke)
 import System.IO.Unsafe (unsafePerformIO)
-
 import Prelude
 
 {- little-endian parsers -}
@@ -75,9 +69,11 @@ int64le = parseLe
 
 parseLe :: (Integral a, FiniteBits a) => LittleEndian (Parser a)
 parseLe = withLE $ p 0
-  where p :: (Integral a, FiniteBits a) => a -> Parser a
-        p proxy = let n = byteSize proxy
-                  in nByteIntLe n
+  where
+    p :: (Integral a, FiniteBits a) => a -> Parser a
+    p proxy =
+      let n = byteSize proxy
+       in nByteIntLe n
 
 float32le :: LittleEndian (Parser Float)
 float32le = fmap (fmap toFloat) word32le
@@ -85,12 +81,14 @@ float32le = fmap (fmap toFloat) word32le
 float64le :: LittleEndian (Parser Double)
 float64le = fmap (fmap toDouble) word64le
 
--- | Parse @n@ bytes and interpret them as a little-endian integer. The caller
--- must ensure that the returned type is the correct size for the number of
--- bytes parsed.
+{- | Parse @n@ bytes and interpret them as a little-endian integer. The caller
+ must ensure that the returned type is the correct size for the number of
+ bytes parsed.
+-}
 nByteIntLe :: (Integral a, Bits a) => Int -> Parser a
 nByteIntLe nbytes = B.foldr go 0 <$> A.take nbytes
-  where go b acc = (acc `shiftL` 8) + (fromIntegral b)
+  where
+    go b acc = (acc `shiftL` 8) + fromIntegral b
 
 {- big-endian parsers -}
 word16be :: BigEndian (Parser Word16)
@@ -113,9 +111,11 @@ int64be = parseBe
 
 parseBe :: (Integral a, FiniteBits a) => BigEndian (Parser a)
 parseBe = withBE $ p 0
-  where p :: (Integral a, FiniteBits a) => a -> Parser a
-        p proxy = let n = byteSize proxy
-                  in nByteIntBe n
+  where
+    p :: (Integral a, FiniteBits a) => a -> Parser a
+    p proxy =
+      let n = byteSize proxy
+       in nByteIntBe n
 
 float32be :: BigEndian (Parser Float)
 float32be = fmap (fmap toFloat) word32be
@@ -123,15 +123,18 @@ float32be = fmap (fmap toFloat) word32be
 float64be :: BigEndian (Parser Double)
 float64be = fmap (fmap toDouble) word64be
 
--- | Parse @n@ bytes and interpret them as a big-endian integer. The caller
--- must ensure that the returned type is the correct size for the number of
--- bytes parsed.
+{- | Parse @n@ bytes and interpret them as a big-endian integer. The caller
+ must ensure that the returned type is the correct size for the number of
+ bytes parsed.
+-}
 nByteIntBe :: (Integral a, Bits a) => Int -> Parser a
 nByteIntBe nbytes = B.foldl' go 0 <$> A.take nbytes
-  where go acc b = (acc `shiftL` 8) + (fromIntegral b)
+  where
+    go acc b = (acc `shiftL` 8) + fromIntegral b
 
--- | Get the number of 8-bit bytes used to represent the given number.
--- The actual value passed is not used at all.
+{- | Get the number of 8-bit bytes used to represent the given number.
+ The actual value passed is not used at all.
+-}
 byteSize :: (FiniteBits a) => a -> Int
 byteSize n = finiteBitSize n `div` 8
 
@@ -143,11 +146,13 @@ byteSize n = finiteBitSize n `div` 8
 -}
 
 toFloat :: Word32 -> Float
-toFloat word = unsafePerformIO $ F.alloca $ \buf -> do
-  F.poke (F.castPtr buf) word
-  F.peek buf
+toFloat word = unsafePerformIO $
+  F.alloca $ \buf -> do
+    F.poke (F.castPtr buf) word
+    F.peek buf
 
 toDouble :: Word64 -> Double
-toDouble word = unsafePerformIO $ F.alloca $ \buf -> do
-  F.poke (F.castPtr buf) word
-  F.peek buf
+toDouble word = unsafePerformIO $
+  F.alloca $ \buf -> do
+    F.poke (F.castPtr buf) word
+    F.peek buf

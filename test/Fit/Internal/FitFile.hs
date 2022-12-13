@@ -1,11 +1,15 @@
 module Test.Fit.Internal.FitFile (
-  specs
-  ) where
+  specs,
+) where
 
-import Fit.Internal.FitFile
-
-import Test.Hspec
-import Test.QuickCheck hiding ((.&.))
+import Fit.Internal.FitFile (
+  LocalMessageType (unLmt),
+  TimeOffset (unTo),
+  mkLocalMessageType,
+  mkTimeOffset,
+ )
+import Test.Hspec (Spec, describe, it)
+import Test.QuickCheck (property)
 
 import Data.Bits
 

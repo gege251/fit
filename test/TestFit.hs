@@ -1,6 +1,6 @@
-import Test.Fit.Internal.Numbers as Numbers
-import Test.Fit.Internal.FitParser as FitParser
-import Test.Fit.Internal.FitFile as FitFile
+import qualified Test.Fit.Internal.FitFile as FitFile
+import qualified Test.Fit.Internal.FitParser as FitParser
+import qualified Test.Fit.Internal.Numbers as Numbers
 
 import Test.Hspec
 

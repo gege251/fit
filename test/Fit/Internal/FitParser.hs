@@ -1,18 +1,30 @@
 module Test.Fit.Internal.FitParser (
-  specs
-  ) where
+  specs,
+) where
 
-import Fit.Internal.Architecture
-import Fit.Internal.FitFile
-import Fit.Internal.FitParser
-
-import Test.Hspec
-import Test.Hspec.Attoparsec
-import Test.QuickCheck hiding ((.&.))
-
-import Data.Bits
+import Data.Bits (shiftL, (.&.))
 import qualified Data.ByteString as B
-import Data.Word
+import Data.Word (Word16)
+import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle))
+import Fit.Internal.FitFile (
+  LocalMessageType (LMT),
+  MessageDefinition (MessageDef),
+  TimeOffset (TO),
+  Timestamp (Timestamp, unTimestamp),
+ )
+import Fit.Internal.FitParser (
+  addMessageDef,
+  archWord16,
+  lookupMessageDef,
+  runFitParser,
+  storeTimestamp,
+  updateTimestamp,
+  withArchitecture,
+  word8,
+ )
+import Test.Hspec (Spec, describe, it)
+import Test.Hspec.Attoparsec (shouldParse, (~>))
+import Test.QuickCheck hiding ((.&.))
 
 specs :: Spec
 specs = describe "Fit.Parse.FitParser" $ do
@@ -22,22 +34,25 @@ specs = describe "Fit.Parse.FitParser" $ do
 
 architectureSpec :: Spec
 architectureSpec = describe "Architecture" $ do
-  it "Parses a single byte" $ property $
-    \n -> B.pack [n] ~> runFitParser word8 `shouldParse` n
+  it "Parses a single byte" $
+    property $
+      \n -> B.pack [n] ~> runFitParser word8 `shouldParse` n
 
-  it "Parses little-endian by default" $ property $
-    \n -> B.pack [n,0] ~> runFitParser archWord16 `shouldParse` (fromIntegral n :: Word16)
+  it "Parses little-endian by default" $
+    property $
+      \n -> B.pack [n, 0] ~> runFitParser archWord16 `shouldParse` (fromIntegral n :: Word16)
 
-  it "Respects withArchitecture when parsing" $ property $
-    let parser = runFitParser $ withArchitecture ArchBig archWord16
-    in \n -> B.pack [n,0] ~> parser `shouldParse` (fromIntegral n `shiftL` 8 :: Word16)
+  it "Respects withArchitecture when parsing" $
+    property $
+      let parser = runFitParser $ withArchitecture ArchBig archWord16
+       in \n -> B.pack [n, 0] ~> parser `shouldParse` (fromIntegral n `shiftL` 8 :: Word16)
 
   it "Nests withArchitecture calls correctly" $ do
     let parser = withArchitecture ArchBig $ do
           little <- withArchitecture ArchLittle archWord16
           big <- archWord16
           return (little, big)
-    B.pack [1,0,1,0] ~> runFitParser parser `shouldParse` (1, 256)
+    B.pack [1, 0, 1, 0] ~> runFitParser parser `shouldParse` (1, 256)
 
 messageDefsSpec :: Spec
 messageDefsSpec = describe "Message definitions" $ do

@@ -1,4 +1,5 @@
 # fit
+
 The FIT protocol is used by many sport and fitness devices made by companies
 like Garmin, for example running watches and bike computers. _fit_ provides an
 API for parsing these files for analysis or conversion.

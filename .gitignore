@@ -2,4 +2,6 @@ dist/
 dist-newstyle/
 cabal.sandbox.config
 .cabal-sandbox
-/.DS_Store
+.DS_Store
+.envrc
+.direnv

@@ -1,0 +1,7 @@
+cradle:
+  cabal:
+    - path: "./src"
+      component: "lib:fit"
+
+    - path: "./test"
+      component: "test:test-fit"

@@ -1,21 +1,18 @@
-{-|
+{-# LANGUAGE LambdaCase #-}
+
+{- |
 Module      : Fit.Internal.FitParser
 Copyright   : Copyright 2014-2015, Matt Giles
 License     : Modified BSD License (see LICENSE file)
 Maintainer  : matt.w.giles@gmail.com
 Stability   : experimental
-
 -}
-
-{-# LANGUAGE LambdaCase #-}
-
 module Fit.Internal.FitParser (
   -- * FitParser
   FitParser,
   runFitParser,
-  FpState(..),
-  Definitions(..),
-
+  FpState (..),
+  Definitions (..),
   addMessageDef,
   lookupMessageDef,
   withArchitecture,
@@ -31,43 +28,47 @@ module Fit.Internal.FitParser (
   archWord16,
   archWord32,
   archWord64,
-
   archInt16,
   archInt32,
   archInt64,
-
   archFloat32,
-  archFloat64
-  ) where
+  archFloat64,
+) where
 
-import Fit.Internal.Architecture
-import Fit.Internal.FitFile
-import qualified Fit.Internal.Numbers as N
-
-import Control.Applicative
+import Control.Applicative (Const (Const, getConst))
 import Control.Monad.State.Class (get, modify)
 import Control.Monad.State.Strict (StateT, evalStateT)
 import Control.Monad.Trans (lift)
 import Data.Attoparsec.ByteString (Parser)
 import qualified Data.Attoparsec.ByteString as A (anyWord8)
 import Data.Bits ((.&.))
-import Data.Int (Int8, Int16, Int32, Int64)
+import Data.Int (Int16, Int32, Int64, Int8)
 import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as IntMap (insert, lookup, empty)
-import Data.Word (Word8, Word16, Word32, Word64)
-
+import qualified Data.IntMap.Strict as IntMap (empty, insert, lookup)
+import Data.Word (Word16, Word32, Word64, Word8)
+import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle), BigEndian, LittleEndian, WithArch (unArch))
+import Fit.Internal.FitFile (
+  LocalMessageType (LMT),
+  MessageDefinition (defLocalType),
+  TimeOffset (TO),
+  Timestamp (Timestamp),
+  unLocalMessageType,
+ )
+import qualified Fit.Internal.Numbers as N
 import Prelude
 
 type FitParser a = StateT FpState Parser a
 
--- | Turn a 'FitParser' into a plain attoparsec 'Parser'. This doesn't require any
--- configuration as the initial state for a FIT parse is always the same.
+{- | Turn a 'FitParser' into a plain attoparsec 'Parser'. This doesn't require any
+ configuration as the initial state for a FIT parse is always the same.
+-}
 runFitParser :: FitParser a -> Parser a
 runFitParser = flip evalStateT (FpState ArchLittle defEmpty Nothing)
 
--- | Little-endian interpretation is used by default by 'FitParser'.
--- Use this function to set the endianness to use for the scope of a particular action.
--- After the action is finished the previous endianness is restored.
+{- | Little-endian interpretation is used by default by 'FitParser'.
+ Use this function to set the endianness to use for the scope of a particular action.
+ After the action is finished the previous endianness is restored.
+-}
 withArchitecture :: Arch -> FitParser a -> FitParser a
 withArchitecture arch action =
   use fpArch >>= \old -> setArch arch *> action <* setArch old
@@ -75,81 +76,89 @@ withArchitecture arch action =
 setArch :: Arch -> FitParser ()
 setArch = assign fpArch
 
--- | Register a 'MessageDefinition' with the parser, so it can decode
--- subsequent data messages using the definition
+{- | Register a 'MessageDefinition' with the parser, so it can decode
+ subsequent data messages using the definition
+-}
 addMessageDef :: MessageDefinition -> FitParser ()
-addMessageDef def = fpMessageDefs %= (defAdd def)
+addMessageDef def = fpMessageDefs %= defAdd def
 
--- | Look up the 'MessageDefinition' for the given message type.
--- It is an error to look up a message type that has no registered definition,
--- since it is impossible to decode a data message with no definition
+{- | Look up the 'MessageDefinition' for the given message type.
+ It is an error to look up a message type that has no registered definition,
+ since it is impossible to decode a data message with no definition
+-}
 lookupMessageDef :: LocalMessageType -> FitParser MessageDefinition
 lookupMessageDef lmt = do
   msgDefs <- use fpMessageDefs
   case defLookup lmt msgDefs of
-   Just def -> return def
-   Nothing -> error $ "No definition for local type " ++ (show lmt)
+    Just def -> return def
+    Nothing -> error $ "No definition for local type " ++ show lmt
 
--- | Store the given 'Timestamp' as the most recent. Is used to store timestamps
--- from non-compressed timestamp messages. For compressed-timestamp messages use
--- 'updateTimestamp' instead.
+{- | Store the given 'Timestamp' as the most recent. Is used to store timestamps
+ from non-compressed timestamp messages. For compressed-timestamp messages use
+ 'updateTimestamp' instead.
+-}
 storeTimestamp :: Timestamp -> FitParser ()
 storeTimestamp t = fpLastTimestamp .= Just t
 
--- | Use the given 'TimeOffset' and the previous 'Timestamp' to compute a new
--- Timestamp. The new 'Timestamp' is stored as most recent and is returned.
---
--- This function fails if there is no previously-stored 'Timestamp'. This
--- condition should never come up when parsing a valid FIT file.
+{- | Use the given 'TimeOffset' and the previous 'Timestamp' to compute a new
+ Timestamp. The new 'Timestamp' is stored as most recent and is returned.
+
+ This function fails if there is no previously-stored 'Timestamp'. This
+ condition should never come up when parsing a valid FIT file.
+-}
 updateTimestamp :: TimeOffset -> FitParser Timestamp
 updateTimestamp offset = do
   previous <- use fpLastTimestamp
   let new = addOffset offset previous
   fpLastTimestamp .= Just new
   return new
-
-  where addOffset _ Nothing = error "No base timestamp to update"
-        addOffset (TO off) (Just (Timestamp previous)) =
-          let off' = fromIntegral off
-              low5Prev = previous .&. 0x1F
-              high27Prev = previous .&. 0xFFFFFFE0
-              rollover = off' < low5Prev
-          in if rollover
-             then Timestamp $ high27Prev + 0x20 + off'
-             else Timestamp $ high27Prev + off'
+  where
+    addOffset _ Nothing = error "No base timestamp to update"
+    addOffset (TO off) (Just (Timestamp previous)) =
+      let off' = fromIntegral off
+          low5Prev = previous .&. 0x1F
+          high27Prev = previous .&. 0xFFFFFFE0
+          rollover = off' < low5Prev
+       in if rollover
+            then Timestamp $ high27Prev + 0x20 + off'
+            else Timestamp $ high27Prev + off'
 
 -- | The necessary state for parsing FIT files
-data FpState = FpState {
-  _fpArch          :: !Arch,             -- ^ The active endian-ness
-  _fpMessageDefs   :: Definitions,       -- ^ The set of active message definitions
-  _fpLastTimestamp :: !(Maybe Timestamp) -- ^ The most recently stored timestamp
+data FpState = FpState
+  { -- | The active endian-ness
+    _fpArch :: !Arch
+  , -- | The set of active message definitions
+    _fpMessageDefs :: Definitions
+  , -- | The most recently stored timestamp
+    _fpLastTimestamp :: !(Maybe Timestamp)
   }
 
--- | The definitions are stored as a map on the local message type number. When a definition
--- is parsed with a previously-used local message type, the previous definition is
--- overwritten.
-newtype Definitions = Defs { unDefs :: IntMap MessageDefinition }
+{- | The definitions are stored as a map on the local message type number. When a definition
+ is parsed with a previously-used local message type, the previous definition is
+ overwritten.
+-}
+newtype Definitions = Defs {unDefs :: IntMap MessageDefinition}
 
 {- Lenses for FpState -}
 fpArch :: Functor f => Lens f FpState Arch
-fpArch f (FpState arch defs ts) = (\arch' -> FpState arch' defs ts) <$> (f arch)
+fpArch f (FpState arch defs ts) = (\arch' -> FpState arch' defs ts) <$> f arch
 
 fpMessageDefs :: Functor f => Lens f FpState Definitions
-fpMessageDefs f (FpState arch defs ts) = (\defs' -> FpState arch defs' ts) <$> (f defs)
+fpMessageDefs f (FpState arch defs ts) = (\defs' -> FpState arch defs' ts) <$> f defs
 
 fpLastTimestamp :: Functor f => Lens f FpState (Maybe Timestamp)
-fpLastTimestamp f (FpState arch defs ts) = (\ts' -> FpState arch defs ts') <$> (f ts)
+fpLastTimestamp f (FpState arch defs ts) = FpState arch defs <$> f ts
 
 defAdd :: MessageDefinition -> Definitions -> Definitions
-defAdd md = Defs . (IntMap.insert lmt md) . unDefs
-  where lmt = unLocalMessageType . defLocalType $ md
+defAdd md = Defs . IntMap.insert lmt md . unDefs
+  where
+    lmt = unLocalMessageType . defLocalType $ md
 
 defLookup :: LocalMessageType -> Definitions -> Maybe MessageDefinition
 defLookup (LMT lmt) (Defs defs) = IntMap.lookup (fromIntegral lmt) defs
 
 defEmpty :: Definitions
-defEmpty = Defs (IntMap.empty)
-
+defEmpty = Defs IntMap.empty
 
 word8 :: FitParser Word8
 word8 = lift A.anyWord8
@@ -157,11 +166,12 @@ word8 = lift A.anyWord8
 int8 :: FitParser Int8
 int8 = fromIntegral <$> word8
 
--- $archparsers
--- The following parsers are all sensitive to the active endianness. For example,
--- 'archWord16' will use a little-endian or big-endian interpretation according
--- to the architecture for the 'MessageDefinition' for the current message.
--- Internally, these parsers use the endian-specific parsers from "Fit.Internal.Numbers".
+{- $archparsers
+ The following parsers are all sensitive to the active endianness. For example,
+ 'archWord16' will use a little-endian or big-endian interpretation according
+ to the architecture for the 'MessageDefinition' for the current message.
+ Internally, these parsers use the endian-specific parsers from "Fit.Internal.Numbers".
+-}
 
 -- | Parse a Word16 using the active endianness
 archWord16 :: FitParser Word16
@@ -195,13 +205,14 @@ archFloat32 = withArch N.float32le N.float32be
 archFloat64 :: FitParser Double
 archFloat64 = withArch N.float64le N.float64be
 
--- | Perform an architecture-sensitive operation with separate
--- actions for little- and big-endian parsing
+{- | Perform an architecture-sensitive operation with separate
+ actions for little- and big-endian parsing
+-}
 withArch :: LittleEndian (Parser a) -> BigEndian (Parser a) -> FitParser a
-withArch little big = use fpArch >>= \case
-  ArchLittle -> lift (unArch little)
-  ArchBig -> lift (unArch big)
-
+withArch little big =
+  use fpArch >>= \case
+    ArchLittle -> lift (unArch little)
+    ArchBig -> lift (unArch big)
 
 {- Quick lens implementation for handling state in FitParser -}
 
@@ -232,7 +243,7 @@ type Getter s a = Lens (Const a) s a
 
 type Setter s a = Lens Identity s a
 
-newtype Identity a = Identity { runIdentity :: a }
+newtype Identity a = Identity {runIdentity :: a}
 
 instance Functor Identity where
   fmap f (Identity a) = Identity (f a)
