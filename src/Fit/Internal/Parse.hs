@@ -38,7 +38,6 @@ import qualified Data.Attoparsec.Combinator as A (count, many')
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B (init)
-import Data.Functor ((<&>))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as S (fromList)
 import Data.Text (Text)
@@ -132,7 +131,7 @@ parseMessageDef lmt = do
     word8 >>= \case
       0 -> return ArchLittle
       1 -> return ArchBig
-      _ -> error "Architecture neither 0 nor 1"
+      _ -> fail "Architecture neither 0 nor 1"
   globalNum <- fromIntegral <$> withArchitecture arch archInt16
   numFields <- fromIntegral <$> word8
   fieldDefs <- replicateM numFields parseFieldDef
@@ -145,22 +144,22 @@ parseFieldDef = FieldDef <$> num <*> size <*> baseType
     size = fromIntegral <$> word8
     baseType =
       word8
-        <&> \case
-          0x00 -> FitEnum
-          0x01 -> FitSInt8
-          0x02 -> FitUInt8
-          0x83 -> FitSInt16
-          0x84 -> FitUInt16
-          0x85 -> FitSInt32
-          0x86 -> FitUInt32
-          0x07 -> FitString
-          0x88 -> FitFloat32
-          0x89 -> FitFloat64
-          0x0A -> FitUInt8Z
-          0x8B -> FitUInt16Z
-          0x8C -> FitUInt32Z
-          0x0D -> FitByte
-          _ -> error "Invalid base type field"
+        >>= \case
+          0x00 -> pure FitEnum
+          0x01 -> pure FitSInt8
+          0x02 -> pure FitUInt8
+          0x83 -> pure FitSInt16
+          0x84 -> pure FitUInt16
+          0x85 -> pure FitSInt32
+          0x86 -> pure FitUInt32
+          0x07 -> pure FitString
+          0x88 -> pure FitFloat32
+          0x89 -> pure FitFloat64
+          0x0A -> pure FitUInt8Z
+          0x8B -> pure FitUInt16Z
+          0x8C -> pure FitUInt32Z
+          0x0D -> pure FitByte
+          _ -> fail "Invalid base type field"
 
 parseDataMessage :: MessageDefinition -> FitParser Message
 parseDataMessage (MessageDef lmt gmt arch fieldDefs) = withArchitecture arch $ do
@@ -218,7 +217,7 @@ parseArray n bt =
         FitUInt16 -> UInt16Array <$> seqOf archWord16
         FitSInt32 -> SInt32Array <$> seqOf archInt32
         FitUInt32 -> UInt32Array <$> seqOf archWord32
-        FitString -> error "String arrays not supported -- how was this line reached?"
+        FitString -> fail "String arrays not supported -- how was this line reached?"
         FitFloat32 -> Float32Array <$> seqOf (fmap fromIntegral archInt32)
         FitFloat64 -> Float64Array <$> seqOf (fmap fromIntegral archInt64)
         FitUInt8Z -> UInt8ZArray <$> seqOf word8

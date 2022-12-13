@@ -91,7 +91,7 @@ lookupMessageDef lmt = do
   msgDefs <- use fpMessageDefs
   case defLookup lmt msgDefs of
     Just def -> return def
-    Nothing -> error $ "No definition for local type " ++ show lmt
+    Nothing -> fail $ "No definition for local type " ++ show lmt
 
 {- | Store the given 'Timestamp' as the most recent. Is used to store timestamps
  from non-compressed timestamp messages. For compressed-timestamp messages use
@@ -109,28 +109,29 @@ storeTimestamp t = fpLastTimestamp .= Just t
 updateTimestamp :: TimeOffset -> FitParser Timestamp
 updateTimestamp offset = do
   previous <- use fpLastTimestamp
-  let new = addOffset offset previous
+  new <- addOffset offset previous
   fpLastTimestamp .= Just new
   return new
   where
-    addOffset _ Nothing = error "No base timestamp to update"
+    addOffset _ Nothing = fail "No base timestamp to update"
     addOffset (TO off) (Just (Timestamp previous)) =
       let off' = fromIntegral off
           low5Prev = previous .&. 0x1F
           high27Prev = previous .&. 0xFFFFFFE0
           rollover = off' < low5Prev
-       in if rollover
-            then Timestamp $ high27Prev + 0x20 + off'
-            else Timestamp $ high27Prev + off'
+       in pure $
+            if rollover
+              then Timestamp $ high27Prev + 0x20 + off'
+              else Timestamp $ high27Prev + off'
 
 -- | The necessary state for parsing FIT files
 data FpState = FpState
-  { -- | The active endian-ness
-    _fpArch :: !Arch
-  , -- | The set of active message definitions
-    _fpMessageDefs :: Definitions
-  , -- | The most recently stored timestamp
-    _fpLastTimestamp :: !(Maybe Timestamp)
+  { _fpArch :: !Arch
+  -- ^ The active endian-ness
+  , _fpMessageDefs :: Definitions
+  -- ^ The set of active message definitions
+  , _fpLastTimestamp :: !(Maybe Timestamp)
+  -- ^ The most recently stored timestamp
   }
 
 {- | The definitions are stored as a map on the local message type number. When a definition
