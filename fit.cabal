@@ -60,7 +60,7 @@ library
 
 test-suite test-fit
   type:             exitcode-stdio-1.0
-  main-is:          test/TestFit.hs
+  main-is:          ./Main.hs
   other-modules:
     Test.Fit.Internal.FitFile
     Test.Fit.Internal.FitParser
