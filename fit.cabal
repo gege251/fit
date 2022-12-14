@@ -79,3 +79,5 @@ test-suite test-fit
     , mtl
     , QuickCheck
     , text
+
+  hs-source-dirs:   test
