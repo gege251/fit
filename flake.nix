@@ -39,5 +39,7 @@
           ];
           inputsFrom = builtins.attrValues self.packages.${system};
         };
+
+        checks = self.packages.${system}.${packageName};
       });
 }
