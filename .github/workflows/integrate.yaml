@@ -1,0 +1,38 @@
+on:
+  push:
+    paths:
+      - '**.hs'
+      - '**.nix'
+      - 'fit.cabal'
+      - '.github/workflows/integrate.yaml'
+    branches:
+      - master
+  pull_request:
+    paths:
+      - '**.hs'
+      - '**.nix'
+      - 'fit.cabal'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: cachix/install-nix-action@v18
+        name: Set up nix
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: experimental-features = nix-command flakes
+      - uses: cachix/cachix-action@v12
+        with:
+          name: gege251
+      - name: Cache cabal folder
+        id: cabal
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cabal/packages
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-cabal
+      - name: Build the full ci derivation
+        run: nix build .#checks.x86_64-linux
