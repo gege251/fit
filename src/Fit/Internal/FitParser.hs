@@ -13,8 +13,9 @@ module Fit.Internal.FitParser (
   runFitParser,
   FpState (..),
   Definitions (..),
-  addMessageDef,
-  lookupMessageDef,
+  addDevFieldMsg,
+  addDevFieldMsgs,
+  lookupDevField,
   withArchitecture,
   storeTimestamp,
   updateTimestamp,
@@ -36,7 +37,9 @@ module Fit.Internal.FitParser (
 ) where
 
 import Control.Applicative (Const (Const, getConst))
-import Control.Monad.State.Class (get, modify)
+import Control.Lens (non, (?~))
+import Control.Lens.At (iat)
+import Control.Monad.State.Class (MonadState (put), get, modify)
 import Control.Monad.State.Strict (StateT, evalStateT)
 import Control.Monad.Trans (lift)
 import Data.Attoparsec.ByteString (Parser)
@@ -44,15 +47,16 @@ import qualified Data.Attoparsec.ByteString as A (anyWord8)
 import Data.Bits ((.&.))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as IntMap (empty, insert, lookup)
+import qualified Data.IntMap.Strict as IntMap (lookup)
 import Data.Word (Word16, Word32, Word64, Word8)
 import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle), BigEndian, LittleEndian, WithArch (unArch))
 import Fit.Internal.FitFile (
-  LocalMessageType (LMT),
-  MessageDefinition (defLocalType),
+  DevDataIdx (DevDataIdx),
+  DevDataMsg (DevDataMsg),
+  FieldDefNum (FieldDefNum),
+  MessageDefinition,
   TimeOffset (TO),
   Timestamp (Timestamp),
-  unLocalMessageType,
  )
 import qualified Fit.Internal.Numbers as N
 import Prelude
@@ -63,7 +67,7 @@ type FitParser a = StateT FpState Parser a
  configuration as the initial state for a FIT parse is always the same.
 -}
 runFitParser :: FitParser a -> Parser a
-runFitParser = flip evalStateT (FpState ArchLittle defEmpty Nothing)
+runFitParser = flip evalStateT (FpState ArchLittle Nothing mempty)
 
 {- | Little-endian interpretation is used by default by 'FitParser'.
  Use this function to set the endianness to use for the scope of a particular action.
@@ -79,19 +83,39 @@ setArch = assign fpArch
 {- | Register a 'MessageDefinition' with the parser, so it can decode
  subsequent data messages using the definition
 -}
-addMessageDef :: MessageDefinition -> FitParser ()
-addMessageDef def = fpMessageDefs %= defAdd def
+addDevFieldMsg :: DevDataMsg -> FitParser ()
+addDevFieldMsg msg@(DevDataMsg (DevDataIdx ddi) (FieldDefNum fi) _ _ _ _ _) =
+  modify (fpDevFieldMsgs . iat ddi . non mempty . iat fi ?~ msg)
+
+addDevFieldMsgs :: [DevDataMsg] -> FitParser ()
+addDevFieldMsgs msgs = do
+  state <- get
+  let updated =
+        foldr
+          ( \msg@(DevDataMsg (DevDataIdx ddi) (FieldDefNum fi) _ _ _ _ _) ->
+              fpDevFieldMsgs . iat ddi . non mempty . iat fi ?~ msg
+          )
+          state
+          msgs
+  put updated
 
 {- | Look up the 'MessageDefinition' for the given message type.
  It is an error to look up a message type that has no registered definition,
  since it is impossible to decode a data message with no definition
 -}
-lookupMessageDef :: LocalMessageType -> FitParser MessageDefinition
-lookupMessageDef lmt = do
-  msgDefs <- use fpMessageDefs
-  case defLookup lmt msgDefs of
-    Just def -> return def
-    Nothing -> fail $ "No definition for local type " ++ show lmt
+lookupDevField :: DevDataIdx -> FieldDefNum -> FitParser DevDataMsg
+lookupDevField (DevDataIdx ddi) (FieldDefNum fi) = do
+  msgDefs <- use fpDevFieldMsgs
+  case IntMap.lookup ddi msgDefs >>= IntMap.lookup fi of
+    Just def -> pure def
+    Nothing ->
+      fail $
+        unwords
+          [ "No definition for developer data id "
+          , show ddi
+          , " and field defintion number "
+          , show fi
+          ]
 
 {- | Store the given 'Timestamp' as the most recent. Is used to store timestamps
  from non-compressed timestamp messages. For compressed-timestamp messages use
@@ -128,10 +152,12 @@ updateTimestamp offset = do
 data FpState = FpState
   { _fpArch :: !Arch
   -- ^ The active endian-ness
-  , _fpMessageDefs :: Definitions
-  -- ^ The set of active message definitions
   , _fpLastTimestamp :: !(Maybe Timestamp)
   -- ^ The most recently stored timestamp
+  , _fpDevFieldMsgs :: !(IntMap (IntMap DevDataMsg))
+  -- ^ Collecting developer field messages we encountered. For speedy lookups, we
+  -- use two nested IntMaps where the outer map's key is the developer data index,
+  -- and the inner's is the field definition number
   }
 
 {- | The definitions are stored as a map on the local message type number. When a definition
@@ -139,27 +165,17 @@ data FpState = FpState
  overwritten.
 -}
 newtype Definitions = Defs {unDefs :: IntMap MessageDefinition}
+  deriving (Show)
 
 {- Lenses for FpState -}
 fpArch :: Functor f => Lens f FpState Arch
-fpArch f (FpState arch defs ts) = (\arch' -> FpState arch' defs ts) <$> f arch
-
-fpMessageDefs :: Functor f => Lens f FpState Definitions
-fpMessageDefs f (FpState arch defs ts) = (\defs' -> FpState arch defs' ts) <$> f defs
+fpArch f (FpState arch ts dfMsgs) = (\x -> FpState x ts dfMsgs) <$> f arch
 
 fpLastTimestamp :: Functor f => Lens f FpState (Maybe Timestamp)
-fpLastTimestamp f (FpState arch defs ts) = FpState arch defs <$> f ts
+fpLastTimestamp f (FpState arch ts dfMsgs) = (\x -> FpState arch x dfMsgs) <$> f ts
 
-defAdd :: MessageDefinition -> Definitions -> Definitions
-defAdd md = Defs . IntMap.insert lmt md . unDefs
-  where
-    lmt = unLocalMessageType . defLocalType $ md
-
-defLookup :: LocalMessageType -> Definitions -> Maybe MessageDefinition
-defLookup (LMT lmt) (Defs defs) = IntMap.lookup (fromIntegral lmt) defs
-
-defEmpty :: Definitions
-defEmpty = Defs IntMap.empty
+fpDevFieldMsgs :: Functor f => Lens f FpState (IntMap (IntMap DevDataMsg))
+fpDevFieldMsgs f (FpState arch ts dfMsgs) = FpState arch ts <$> f dfMsgs
 
 word8 :: FitParser Word8
 word8 = lift A.anyWord8
@@ -234,9 +250,6 @@ assign l x = modify (set l x)
 
 (.=) :: (Monad m, Functor m) => Setter s a -> a -> StateT s m ()
 l .= x = assign l x
-
-(%=) :: (Monad m, Functor m) => Setter s a -> (a -> a) -> StateT s m ()
-l %= f = modify (over l f)
 
 type Lens f s a = (a -> f a) -> s -> f s
 

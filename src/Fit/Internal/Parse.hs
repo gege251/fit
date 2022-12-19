@@ -16,7 +16,7 @@ module Fit.Internal.Parse (
   -- * Parsers for components of FIT files
   parseHeader,
   parseMessages,
-  parseMessage,
+  -- parseMessage,
   parseMessageDef,
   parseFieldDef,
   parseDataMessage,
@@ -32,12 +32,14 @@ module Fit.Internal.Parse (
 import Control.Applicative
 import Control.Monad (replicateM)
 import Control.Monad.Trans (lift)
-import Data.Attoparsec.ByteString (Parser)
+import Data.Attoparsec.ByteString (Parser, endOfInput)
 import qualified Data.Attoparsec.ByteString as A (anyWord8, parseOnly, string, takeTill)
-import qualified Data.Attoparsec.Combinator as A (count, many')
+import qualified Data.Attoparsec.Combinator as A (count, many', manyTill')
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B (init)
+import qualified Data.Map as Map
+import Data.Maybe (mapMaybe)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as S (fromList)
 import Data.Text (Text)
@@ -47,8 +49,12 @@ import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle))
 import Fit.Internal.FitFile (
   Array (ByteArray, EnumArray, Float32Array, Float64Array, SInt16Array, SInt32Array, SInt8Array, UInt16Array, UInt16ZArray, UInt32Array, UInt32ZArray, UInt8Array, UInt8ZArray),
   BaseType (FitByte, FitEnum, FitFloat32, FitFloat64, FitSInt16, FitSInt32, FitSInt8, FitString, FitUInt16, FitUInt16Z, FitUInt32, FitUInt32Z, FitUInt8, FitUInt8Z),
+  DevDataIdx (DevDataIdx),
+  DevDataMsg (DevDataMsg),
+  DevFieldDef (DevFieldDef),
   Field (ArrayField, SingletonField),
   FieldDef (FieldDef),
+  FieldDefNum (FieldDefNum),
   Fit (Fit),
   FitHeader (FH),
   LocalMessageType,
@@ -64,7 +70,7 @@ import Fit.Internal.FitFile (
  )
 import Fit.Internal.FitParser (
   FitParser,
-  addMessageDef,
+  addDevFieldMsgs,
   archFloat32,
   archFloat64,
   archInt16,
@@ -73,7 +79,7 @@ import Fit.Internal.FitParser (
   archWord16,
   archWord32,
   int8,
-  lookupMessageDef,
+  lookupDevField,
   runFitParser,
   storeTimestamp,
   updateTimestamp,
@@ -110,22 +116,37 @@ parseHeader = withArchitecture ArchLittle $ do
   return $ FH headerSize protocolVersion profileVersion dataSize marker crc
 
 parseMessages :: FitParser [Message]
-parseMessages = A.many' parseMessage
+parseMessages = mconcat <$> A.manyTill' parseMessageGroup (lift endOfInput)
 
-parseMessage :: FitParser Message
-parseMessage = do
+parseMessageGroup :: FitParser [Message]
+parseMessageGroup = do
+  messageDef <- parseDefHeader
+  msgs <- A.many' (parseContent messageDef)
+
+  addDevFieldMsgs $ mapMaybe convertToDevDataMsg msgs
+  pure $ DefM messageDef : msgs
+
+parseDefHeader :: FitParser MessageDefinition
+parseDefHeader = do
   headerByte <- lift A.anyWord8
   let header = mkHeader headerByte
-  case header of
-    DefHeader t -> do
-      msgDef <- parseMessageDef t
-      addMessageDef msgDef
-      return (DefM msgDef)
-    DataHeader t -> lookupMessageDef t >>= parseDataMessage
-    CTDataHeader t o -> lookupMessageDef t >>= parseCTDataMessage o
 
-parseMessageDef :: LocalMessageType -> FitParser MessageDefinition
-parseMessageDef lmt = do
+  case header of
+    DefHeader t d -> parseMessageDef t d
+    _ -> fail "Not a def header"
+
+parseContent :: MessageDefinition -> FitParser Message
+parseContent messageDef = do
+  headerByte <- lift A.anyWord8
+  let header = mkHeader headerByte
+
+  case header of
+    DataHeader _ -> parseDataMessage messageDef
+    CTDataHeader _ o -> parseCTDataMessage o messageDef
+    _ -> fail "Not a content header"
+
+parseMessageDef :: LocalMessageType -> Bool -> FitParser MessageDefinition
+parseMessageDef lmt hasDeveloperData = do
   _ <- word8 -- Unused reserved byte
   arch <-
     word8 >>= \case
@@ -135,39 +156,104 @@ parseMessageDef lmt = do
   globalNum <- fromIntegral <$> withArchitecture arch archInt16
   numFields <- fromIntegral <$> word8
   fieldDefs <- replicateM numFields parseFieldDef
-  return $ MessageDef lmt globalNum arch fieldDefs
+  devFields <-
+    if hasDeveloperData
+      then do
+        devNumFields <- fromIntegral <$> word8
+        replicateM devNumFields parseDevFieldDef
+      else pure []
+
+  return $ MessageDef lmt globalNum arch fieldDefs devFields
 
 parseFieldDef :: FitParser FieldDef
 parseFieldDef = FieldDef <$> num <*> size <*> baseType
   where
     num = fromIntegral <$> word8
     size = fromIntegral <$> word8
-    baseType =
-      word8
-        >>= \case
-          0x00 -> pure FitEnum
-          0x01 -> pure FitSInt8
-          0x02 -> pure FitUInt8
-          0x83 -> pure FitSInt16
-          0x84 -> pure FitUInt16
-          0x85 -> pure FitSInt32
-          0x86 -> pure FitUInt32
-          0x07 -> pure FitString
-          0x88 -> pure FitFloat32
-          0x89 -> pure FitFloat64
-          0x0A -> pure FitUInt8Z
-          0x8B -> pure FitUInt16Z
-          0x8C -> pure FitUInt32Z
-          0x0D -> pure FitByte
-          _ -> fail "Invalid base type field"
+    baseType = word8 >>= toBaseType
+
+toBaseType :: (MonadFail m) => Word8 -> m BaseType
+toBaseType = \case
+  0x00 -> pure FitEnum
+  0x01 -> pure FitSInt8
+  0x02 -> pure FitUInt8
+  0x83 -> pure FitSInt16
+  0x84 -> pure FitUInt16
+  0x85 -> pure FitSInt32
+  0x86 -> pure FitUInt32
+  0x07 -> pure FitString
+  0x88 -> pure FitFloat32
+  0x89 -> pure FitFloat64
+  0x0A -> pure FitUInt8Z
+  0x8B -> pure FitUInt16Z
+  0x8C -> pure FitUInt32Z
+  0x0D -> pure FitByte
+  0x8E -> fail "New field format 0x8E: sint64"
+  0x8F -> fail "New field format 0x8F: uint64"
+  0x90 -> fail "New field format 0x90: uint64z"
+  invalid -> fail ("Invalid base type field: " ++ show invalid)
+
+{- | Specialised version of @toMessage@ to parse dev data messages only
+ TODO: We cannot use the toMessage function, as that would cause a circular dependency
+ but should find a less ad hoc way to achieve this
+-}
+convertToDevDataMsg :: Message -> Maybe DevDataMsg
+convertToDevDataMsg (DefM _) = Nothing
+convertToDevDataMsg (DataM _ gmt fields)
+  | gmt == 206 =
+      let fieldMap = foldr go Map.empty fields
+       in DevDataMsg
+            <$> (Map.lookup 0 fieldMap >>= fmap DevDataIdx . getUInt8)
+            <*> (Map.lookup 1 fieldMap >>= fmap FieldDefNum . getUInt8)
+            <*> (Map.lookup 2 fieldMap >>= getBaseType)
+            <*> (Map.lookup 3 fieldMap >>= getString)
+            <*> (Map.lookup 8 fieldMap >>= getString)
+            <*> (Map.lookup 14 fieldMap >>= getUInt16)
+            <*> pure (Map.lookup 15 fieldMap >>= getUInt8)
+  | otherwise = Nothing
+  where
+    go (SingletonField num value) fieldMap = Map.insert num value fieldMap
+    go (ArrayField _ _) fieldMap = fieldMap -- fail "Developer data message should not include arrays."
+    getUInt8 = \case UInt8Value i -> Just (fromIntegral i); _ -> Nothing
+    getUInt16 = \case UInt16Value i -> Just (fromIntegral i); _ -> Nothing
+    getBaseType = \case UInt8Value i -> toBaseType i; _ -> Nothing
+    getString = \case StringValue str -> Just str; _ -> Nothing
+
+parseDevFieldDef :: FitParser DevFieldDef
+parseDevFieldDef = DevFieldDef <$> num <*> size <*> dataIndex
+  where
+    num = FieldDefNum . fromIntegral <$> word8
+    size = fromIntegral <$> word8
+    dataIndex = DevDataIdx . fromIntegral <$> word8
+
+-- msgs: [DataM (LMT {unLmt = 0}) 206 [SingletonField 0 (UInt8Value 0),SingletonField 1 (UInt8Value 0),SingletonField 2 (UInt8Value 136),SingletonField 3 (StringValue "Doughnuts Earned"),SingletonField 8 (StringValue "doughnuts"),SingletonField 14 (UInt16Value 18)]]
+-- fielddefs: []
+-- msgs: [DataM (LMT {unLmt = 0}) 206 [SingletonField 0 (UInt8Value 0),SingletonField 1 (UInt8Value 1),SingletonField 2 (UInt8Value 2),SingletonField 3 (StringValue "Heart Rate"),SingletonField 8 (StringValue "bpm"),SingletonField 15 (UInt8Value 3),SingletonField 14 (UInt16Value 20)]]
+-- fielddefs: [DevFieldDef {dfdNum = FieldDefNum 1, dfdSize = 1, dfdDataIndex = DevDataIdx 0}]
 
 parseDataMessage :: MessageDefinition -> FitParser Message
-parseDataMessage (MessageDef lmt gmt arch fieldDefs) = withArchitecture arch $ do
+parseDataMessage (MessageDef lmt gmt arch fieldDefs devFieldDefs) = withArchitecture arch $ do
   fields <- mapM parseField fieldDefs
-  return (DataM lmt gmt fields)
+  devFields <- mapM parseDevField devFieldDefs
+  return (DataM lmt gmt (fields <> devFields))
 
 parseField :: FieldDef -> FitParser Field
 parseField (FieldDef num size bt) = do
+  let numValues = size `div` btSize bt
+
+  field <-
+    if numValues == 1 || (bt == FitString)
+      then SingletonField num <$> parseValue bt
+      else ArrayField num <$> parseArray numValues bt
+
+  case field of
+    TimestampField t -> storeTimestamp (Timestamp t) >> return field
+    _ -> return field
+
+parseDevField :: DevFieldDef -> FitParser Field
+parseDevField (DevFieldDef fi@(FieldDefNum num) size ddi) = do
+  DevDataMsg _ _ bt _ _ _ _ <- lookupDevField ddi fi
+
   let numValues = size `div` btSize bt
 
   field <-
@@ -237,11 +323,12 @@ parseString = decodeUtf8 <$> A.takeTill (== 0) <* A.anyWord8
  compressed-timestamp message header.
 -}
 parseCTDataMessage :: TimeOffset -> MessageDefinition -> FitParser Message
-parseCTDataMessage offset (MessageDef lmt gmt arch fieldDefs) = withArchitecture arch $ do
+parseCTDataMessage offset (MessageDef lmt gmt arch fieldDefs devFieldDefs) = withArchitecture arch $ do
   fields <- mapM parseField fieldDefs
+  devFields <- mapM parseDevField devFieldDefs
   newTimestamp <- updateTimestamp offset
   let timestampField = TimestampField (unTimestamp newTimestamp)
-  return $ DataM lmt gmt (timestampField : fields)
+  return $ DataM lmt gmt (timestampField : fields <> devFields)
 
 -- | Transform a FIT message header byte into a 'MessageHeader'
 mkHeader :: Word8 -> MessageHeader
@@ -255,7 +342,8 @@ mkHeader byte =
   where
     isNormalHeader = not (testBit byte 7) -- 0 indicates normal header
     isDefMessage = testBit byte 6 -- 0 indicates data message
-    defHeader = DefHeader normalLmt
+    hasDeveloperData = testBit byte 5 -- indicates extended record format with custom developer data
+    defHeader = DefHeader normalLmt hasDeveloperData
     dataHeader = DataHeader normalLmt
     ctDataHeader = CTDataHeader ctLmt ctOffset
     normalLmt = mkLocalMessageType byte -- in a normal header the lmt is already low 4 bits

@@ -9,9 +9,13 @@ module Fit.Internal.FitFile (
   Fit (..),
   FitHeader (..),
   Message (..),
+  DevDataMsg (..),
+  DevDataIdx (..),
+  FieldDefNum (..),
   msgLmt,
   MessageDefinition (..),
   FieldDef (..),
+  DevFieldDef (..),
   Field (..),
   Value (..),
   Array (..),
@@ -43,19 +47,19 @@ data Fit = Fit
 
 -- | The FIT file header
 data FitHeader = FH
-  { -- | Size of the header in bytes. Will always be 12 or 14,
-    -- based on presence of the CRC
-    fhSize :: !Word8
-  , -- | Protocol version number
-    fhProtocolVersion :: !Word8
-  , -- | Profile version number
-    fhProfileVersion :: !Word16
-  , -- | Combined length of the FIT messages, in bytes
-    fhDataSize :: !Word32
-  , -- | File tag, should always be ".FIT"
-    fhDataType :: ByteString
-  , -- | Optional checksum for header contents
-    fhCrc :: !(Maybe Word16)
+  { fhSize :: !Word8
+  -- ^ Size of the header in bytes. Will always be 12 or 14,
+  -- based on presence of the CRC
+  , fhProtocolVersion :: !Word8
+  -- ^ Protocol version number
+  , fhProfileVersion :: !Word16
+  -- ^ Profile version number
+  , fhDataSize :: !Word32
+  -- ^ Combined length of the FIT messages, in bytes
+  , fhDataType :: ByteString
+  -- ^ File tag, should always be ".FIT"
+  , fhCrc :: !(Maybe Word16)
+  -- ^ Optional checksum for header contents
   }
   deriving (Show)
 
@@ -71,39 +75,84 @@ data Message
   deriving (Show)
 
 msgLmt :: Message -> LocalMessageType
-msgLmt (DefM (MessageDef lmt _ _ _)) = lmt
+msgLmt (DefM (MessageDef lmt _ _ _ _)) = lmt
 msgLmt (DataM lmt _ _) = lmt
+
+{- | Field description messages define the meaning of data within a dev field, a FIT file can
+ contain up to 255 unique fields per developer. These messages must occur in the file before
+ any related data is added.
+-}
+data DevDataMsg = DevDataMsg
+  { ddmDevDataIdx :: !DevDataIdx
+  -- ^ Index of the developer that this message maps to
+  , ddmFieldDefNum :: !FieldDefNum
+  -- ^ Field Number that maps to this message
+  , ddmBaseType :: !BaseType
+  -- ^ Base type of the field
+  , ddmFieldName :: !Text
+  -- ^ Name of the field
+  , ddmUnits :: !Text
+  -- ^ Equivalent native field number
+  , ddmNativeMesgNum :: !Int
+  -- ^ Equivalent native message number
+  -- ^ Units associated with the field
+  , ddmNativeFieldNum :: !(Maybe Int)
+  }
+  deriving (Show, Eq)
+
+newtype DevDataIdx
+  = DevDataIdx Int
+  deriving (Show, Eq)
+
+newtype FieldDefNum
+  = FieldDefNum Int
+  deriving (Show, Eq)
 
 {- | A 'MessageDefinition' for a local message type (LMT) determines how future data messages with
  that LMT are decoded. LMTs can be re-used: a data message with LMT @n@ will use the /most recent/
  message definition for LMT @n@.
 -}
 data MessageDefinition = MessageDef
-  { -- | The local message type being defined
-    defLocalType :: !LocalMessageType
-  , -- | The /global/ message type this LMT will refer to. Must be a
-    -- valid @mesg_num@ value from the FIT profile
-    defGlobalType :: !Int
-  , -- | The /architecture/ this messages with this LMT will use
-    -- for multi-byte values (little- or big-endian)
-    defArch :: !Arch
-  , -- | Definitions for the fields messages with this LMT will contain
-    defFields :: [FieldDef]
+  { defLocalType :: !LocalMessageType
+  -- ^ The local message type being defined
+  , defGlobalType :: !Int
+  -- ^ The /global/ message type this LMT will refer to. Must be a
+  -- valid @mesg_num@ value from the FIT profile
+  , defArch :: !Arch
+  -- ^ The /architecture/ this messages with this LMT will use
+  -- for multi-byte values (little- or big-endian)
+  , defFields :: [FieldDef]
+  -- ^ Definitions for the fields messages with this LMT will contain
+  , defDevFields :: [DevFieldDef]
   }
   deriving (Show, Eq)
 
 -- | Defines the structure for a single field in a message
 data FieldDef = FieldDef
-  { -- | The /field number/. The interpretation of the field number depends on the
-    -- global message type and is found in the FIT profile
-    fdNum :: !Int
-  , -- | The size, in bytes, of the field's contents. This will be a multiple of
-    -- the base type size. In a singleton field this size will be the same as the
-    -- base type size. In an array field it will be some multiple of the base type
-    -- size.
-    fdSize :: !Int
-  , -- | The FIT base type of values in the field
-    fdBaseType :: !BaseType
+  { fdNum :: !Int
+  -- ^ The /field number/. The interpretation of the field number depends on the
+  -- global message type and is found in the FIT profile
+  , fdSize :: !Int
+  -- ^ The size, in bytes, of the field's contents. This will be a multiple of
+  -- the base type size. In a singleton field this size will be the same as the
+  -- base type size. In an array field it will be some multiple of the base type
+  -- size.
+  , fdBaseType :: !BaseType
+  -- ^ The FIT base type of values in the field
+  }
+  deriving (Show, Eq)
+
+-- | Defines the structure for a developer field in a message
+data DevFieldDef = DevFieldDef
+  { dfdNum :: !FieldDefNum
+  -- ^ The /field number/. Maps to the field_definition_number of a field_description
+  , dfdSize :: !Int
+  -- ^ The size, in bytes, of the field's contents. This will be a multiple of
+  -- the base type size. In a singleton field this size will be the same as the
+  -- base type size. In an array field it will be some multiple of the base type
+  -- size.
+  , dfdDataIndex :: !DevDataIdx
+  -- ^	Maps to the developer_data_index of a developer_data_id
   }
   deriving (Show, Eq)
 
@@ -161,7 +210,7 @@ data Array
  the header also contains the compressed time offset.
 -}
 data MessageHeader
-  = DefHeader !LocalMessageType
+  = DefHeader !LocalMessageType !Bool
   | DataHeader !LocalMessageType
   | CTDataHeader !LocalMessageType !TimeOffset
   deriving (Show)

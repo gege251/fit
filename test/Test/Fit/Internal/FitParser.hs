@@ -2,35 +2,35 @@ module Test.Fit.Internal.FitParser (
   specs,
 ) where
 
+import Control.Lens (ix, (^..), (^?))
 import Data.Bits (shiftL, (.&.))
 import qualified Data.ByteString as B
+import Data.Either (fromRight)
 import Data.Word (Word16)
 import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle))
 import Fit.Internal.FitFile (
-  LocalMessageType (LMT),
-  MessageDefinition (MessageDef),
   TimeOffset (TO),
   Timestamp (Timestamp, unTimestamp),
  )
 import Fit.Internal.FitParser (
-  addMessageDef,
   archWord16,
-  lookupMessageDef,
   runFitParser,
   storeTimestamp,
   updateTimestamp,
   withArchitecture,
   word8,
  )
-import Test.Hspec (Spec, describe, it)
+import Fit.Messages (readFileMessages)
+import Fit.Messages.Lens (field, message, real)
+import Test.Hspec (Spec, describe, it, runIO, shouldBe)
 import Test.Hspec.Attoparsec (shouldParse, (~>))
 import Test.QuickCheck hiding ((.&.))
 
 specs :: Spec
 specs = describe "Fit.Parse.FitParser" $ do
   architectureSpec
-  messageDefsSpec
   timestampSpec
+  goldenTests
 
 architectureSpec :: Spec
 architectureSpec = describe "Architecture" $ do
@@ -54,28 +54,6 @@ architectureSpec = describe "Architecture" $ do
           return (little, big)
     B.pack [1, 0, 1, 0] ~> runFitParser parser `shouldParse` (1, 256)
 
-messageDefsSpec :: Spec
-messageDefsSpec = describe "Message definitions" $ do
-  it "Finds the correct message def" $ do
-    let targetDef = MessageDef (LMT 0) 0 ArchLittle []
-        extraDef = MessageDef (LMT 1) 1 ArchLittle []
-        parser = runFitParser $ do
-          addMessageDef targetDef
-          addMessageDef extraDef
-          lookupMessageDef (LMT 0)
-
-    B.empty ~> parser `shouldParse` targetDef
-
-  it "Replaces message def with same local message type" $ do
-    let oldDef = MessageDef (LMT 0) 0 ArchLittle []
-        newDef = MessageDef (LMT 0) 1 ArchBig []
-        parser = runFitParser $ do
-          addMessageDef oldDef
-          addMessageDef newDef
-          lookupMessageDef (LMT 0)
-
-    B.empty ~> parser `shouldParse` newDef
-
 timestampSpec :: Spec
 timestampSpec = describe "Timestamps" $ do
   -- Compressed timestamp offsets aren't zero-based. See FitParser.updateTimestamp
@@ -97,3 +75,14 @@ timestampSpec = describe "Timestamps" $ do
           mapM updateTimestamp offsets
 
     B.empty ~> parser `shouldParse` expectedStamps
+
+goldenTests :: Spec
+goldenTests = describe "Golden tests" $ do
+  activity <-
+    runIO $
+      fromRight (error "Failed to read test activity file.")
+        <$> readFileMessages "test/data/Activity.fit"
+
+  it "Can parse file with developer data" $
+    let doughnuts = activity ^.. message 18 ^? ix 0 . field 0 . real
+     in doughnuts `shouldBe` Just 3.00083327293396
