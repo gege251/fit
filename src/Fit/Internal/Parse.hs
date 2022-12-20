@@ -33,11 +33,12 @@ import Control.Applicative
 import Control.Monad (replicateM)
 import Control.Monad.Trans (lift)
 import Data.Attoparsec.ByteString (Parser, endOfInput)
-import qualified Data.Attoparsec.ByteString as A (anyWord8, parseOnly, scan, string)
+import qualified Data.Attoparsec.ByteString as A (anyWord8, parseOnly, runScanner, string, word8)
 import qualified Data.Attoparsec.Combinator as A (count, many', manyTill')
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B (init)
+import Data.Functor (($>))
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
 import Data.Sequence (Seq)
@@ -317,7 +318,13 @@ parseSeq n p = S.fromList <$> A.count n p
 
 -- | Parse a null-terminated UTF-8 string.
 parseString :: Int -> Parser Text
-parseString n = decodeUtf8 <$> A.scan 0 go -- <* A.skip (== 0)
+parseString n = do
+  (result, size) <- A.runScanner 0 go
+  decodeUtf8
+    <$> ( if size == n
+            then pure result
+            else A.word8 0 $> result
+        )
   where
     go :: Int -> Word8 -> Maybe Int
     go size ch
