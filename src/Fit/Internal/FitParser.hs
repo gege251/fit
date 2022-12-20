@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
 {- |
@@ -15,6 +16,8 @@ module Fit.Internal.FitParser (
   Definitions (..),
   addDevFieldMsg,
   addDevFieldMsgs,
+  addMessageDef,
+  lookupMessageDef,
   lookupDevField,
   withArchitecture,
   storeTimestamp,
@@ -47,16 +50,23 @@ import qualified Data.Attoparsec.ByteString as A (anyWord8)
 import Data.Bits ((.&.))
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as IntMap (lookup)
+import qualified Data.IntMap.Strict as IntMap (insert, lookup)
 import Data.Word (Word16, Word32, Word64, Word8)
-import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle), BigEndian, LittleEndian, WithArch (unArch))
+import Fit.Internal.Architecture (
+  Arch (ArchBig, ArchLittle),
+  BigEndian,
+  LittleEndian,
+  WithArch (unArch),
+ )
 import Fit.Internal.FitFile (
   DevDataIdx (DevDataIdx),
   DevDataMsg (DevDataMsg),
   FieldDefNum (FieldDefNum),
-  MessageDefinition,
+  LocalMessageType (LMT),
+  MessageDefinition (defLocalType),
   TimeOffset (TO),
   Timestamp (Timestamp),
+  unLocalMessageType,
  )
 import qualified Fit.Internal.Numbers as N
 import Prelude
@@ -67,7 +77,7 @@ type FitParser a = StateT FpState Parser a
  configuration as the initial state for a FIT parse is always the same.
 -}
 runFitParser :: FitParser a -> Parser a
-runFitParser = flip evalStateT (FpState ArchLittle Nothing mempty)
+runFitParser = flip evalStateT (FpState ArchLittle Nothing mempty mempty)
 
 {- | Little-endian interpretation is used by default by 'FitParser'.
  Use this function to set the endianness to use for the scope of a particular action.
@@ -79,6 +89,23 @@ withArchitecture arch action =
 
 setArch :: Arch -> FitParser ()
 setArch = assign fpArch
+
+{- | Register a 'MessageDefinition' with the parser, so it can decode
+ subsequent data messages using the definition
+-}
+addMessageDef :: MessageDefinition -> FitParser ()
+addMessageDef def = fpMessageDefs %= defAdd def
+
+{- | Look up the 'MessageDefinition' for the given message type.
+ It is an error to look up a message type that has no registered definition,
+ since it is impossible to decode a data message with no definition
+-}
+lookupMessageDef :: LocalMessageType -> FitParser MessageDefinition
+lookupMessageDef lmt = do
+  msgDefs <- use fpMessageDefs
+  case defLookup lmt msgDefs of
+    Just def -> return def
+    Nothing -> fail $ "No definition for local type " ++ show lmt
 
 {- | Register a 'MessageDefinition' with the parser, so it can decode
  subsequent data messages using the definition
@@ -154,6 +181,8 @@ data FpState = FpState
   -- ^ The active endian-ness
   , _fpLastTimestamp :: !(Maybe Timestamp)
   -- ^ The most recently stored timestamp
+  , _fpMessageDefs :: Definitions
+  -- ^ The set of active message definitions
   , _fpDevFieldMsgs :: !(IntMap (IntMap DevDataMsg))
   -- ^ Collecting developer field messages we encountered. For speedy lookups, we
   -- use two nested IntMaps where the outer map's key is the developer data index,
@@ -165,17 +194,28 @@ data FpState = FpState
  overwritten.
 -}
 newtype Definitions = Defs {unDefs :: IntMap MessageDefinition}
-  deriving (Show)
+  deriving (Show, Semigroup, Monoid)
 
 {- Lenses for FpState -}
 fpArch :: Functor f => Lens f FpState Arch
-fpArch f (FpState arch ts dfMsgs) = (\x -> FpState x ts dfMsgs) <$> f arch
+fpArch f s = (\x -> s {_fpArch = x}) <$> f (_fpArch s)
+
+fpMessageDefs :: Functor f => Lens f FpState Definitions
+fpMessageDefs f s = (\x -> s {_fpMessageDefs = x}) <$> f (_fpMessageDefs s)
 
 fpLastTimestamp :: Functor f => Lens f FpState (Maybe Timestamp)
-fpLastTimestamp f (FpState arch ts dfMsgs) = (\x -> FpState arch x dfMsgs) <$> f ts
+fpLastTimestamp f s = (\x -> s {_fpLastTimestamp = x}) <$> f (_fpLastTimestamp s)
 
 fpDevFieldMsgs :: Functor f => Lens f FpState (IntMap (IntMap DevDataMsg))
-fpDevFieldMsgs f (FpState arch ts dfMsgs) = FpState arch ts <$> f dfMsgs
+fpDevFieldMsgs f s = (\x -> s {_fpDevFieldMsgs = x}) <$> f (_fpDevFieldMsgs s)
+
+defAdd :: MessageDefinition -> Definitions -> Definitions
+defAdd md = Defs . IntMap.insert lmt md . unDefs
+  where
+    lmt = unLocalMessageType . defLocalType $ md
+
+defLookup :: LocalMessageType -> Definitions -> Maybe MessageDefinition
+defLookup (LMT lmt) (Defs defs) = IntMap.lookup (fromIntegral lmt) defs
 
 word8 :: FitParser Word8
 word8 = lift A.anyWord8
@@ -250,6 +290,9 @@ assign l x = modify (set l x)
 
 (.=) :: (Monad m, Functor m) => Setter s a -> a -> StateT s m ()
 l .= x = assign l x
+
+(%=) :: (Monad m, Functor m) => Setter s a -> (a -> a) -> StateT s m ()
+l %= f = modify (over l f)
 
 type Lens f s a = (a -> f a) -> s -> f s
 

@@ -91,9 +91,9 @@ data DevDataMsg = DevDataMsg
   -- ^ Base type of the field
   , ddmFieldName :: !Text
   -- ^ Name of the field
-  , ddmUnits :: !Text
+  , ddmUnits :: !(Maybe Text)
   -- ^ Equivalent native field number
-  , ddmNativeMesgNum :: !Int
+  , ddmNativeMesgNum :: !(Maybe Int)
   -- ^ Equivalent native message number
   -- ^ Units associated with the field
   , ddmNativeFieldNum :: !(Maybe Int)

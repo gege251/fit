@@ -33,7 +33,7 @@ import Control.Applicative
 import Control.Monad (replicateM)
 import Control.Monad.Trans (lift)
 import Data.Attoparsec.ByteString (Parser, endOfInput)
-import qualified Data.Attoparsec.ByteString as A (anyWord8, parseOnly, string, takeTill)
+import qualified Data.Attoparsec.ByteString as A (anyWord8, parseOnly, scan, string)
 import qualified Data.Attoparsec.Combinator as A (count, many', manyTill')
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.ByteString (ByteString)
@@ -71,6 +71,7 @@ import Fit.Internal.FitFile (
 import Fit.Internal.FitParser (
   FitParser,
   addDevFieldMsgs,
+  addMessageDef,
   archFloat32,
   archFloat64,
   archInt16,
@@ -80,6 +81,7 @@ import Fit.Internal.FitParser (
   archWord32,
   int8,
   lookupDevField,
+  lookupMessageDef,
   runFitParser,
   storeTimestamp,
   updateTimestamp,
@@ -121,7 +123,7 @@ parseMessages = mconcat <$> A.manyTill' parseMessageGroup (lift endOfInput)
 parseMessageGroup :: FitParser [Message]
 parseMessageGroup = do
   messageDef <- parseDefHeader
-  msgs <- A.many' (parseContent messageDef)
+  msgs <- A.many' parseContent
 
   addDevFieldMsgs $ mapMaybe convertToDevDataMsg msgs
   pure $ DefM messageDef : msgs
@@ -132,17 +134,20 @@ parseDefHeader = do
   let header = mkHeader headerByte
 
   case header of
-    DefHeader t d -> parseMessageDef t d
+    DefHeader t d -> do
+      msgDef <- parseMessageDef t d
+      addMessageDef msgDef
+      pure msgDef
     _ -> fail "Not a def header"
 
-parseContent :: MessageDefinition -> FitParser Message
-parseContent messageDef = do
+parseContent :: FitParser Message
+parseContent = do
   headerByte <- lift A.anyWord8
   let header = mkHeader headerByte
 
   case header of
-    DataHeader _ -> parseDataMessage messageDef
-    CTDataHeader _ o -> parseCTDataMessage o messageDef
+    DataHeader t -> lookupMessageDef t >>= parseDataMessage
+    CTDataHeader t o -> lookupMessageDef t >>= parseCTDataMessage o
     _ -> fail "Not a content header"
 
 parseMessageDef :: LocalMessageType -> Bool -> FitParser MessageDefinition
@@ -152,7 +157,7 @@ parseMessageDef lmt hasDeveloperData = do
     word8 >>= \case
       0 -> return ArchLittle
       1 -> return ArchBig
-      _ -> fail "Architecture neither 0 nor 1"
+      invalid -> fail $ "Architecture neither 0 nor 1: " ++ show invalid
   globalNum <- fromIntegral <$> withArchitecture arch archInt16
   numFields <- fromIntegral <$> word8
   fieldDefs <- replicateM numFields parseFieldDef
@@ -207,8 +212,8 @@ convertToDevDataMsg (DataM _ gmt fields)
             <*> (Map.lookup 1 fieldMap >>= fmap FieldDefNum . getUInt8)
             <*> (Map.lookup 2 fieldMap >>= getBaseType)
             <*> (Map.lookup 3 fieldMap >>= getString)
-            <*> (Map.lookup 8 fieldMap >>= getString)
-            <*> (Map.lookup 14 fieldMap >>= getUInt16)
+            <*> pure (Map.lookup 8 fieldMap >>= getString)
+            <*> pure (Map.lookup 14 fieldMap >>= getUInt16)
             <*> pure (Map.lookup 15 fieldMap >>= getUInt8)
   | otherwise = Nothing
   where
@@ -226,11 +231,6 @@ parseDevFieldDef = DevFieldDef <$> num <*> size <*> dataIndex
     size = fromIntegral <$> word8
     dataIndex = DevDataIdx . fromIntegral <$> word8
 
--- msgs: [DataM (LMT {unLmt = 0}) 206 [SingletonField 0 (UInt8Value 0),SingletonField 1 (UInt8Value 0),SingletonField 2 (UInt8Value 136),SingletonField 3 (StringValue "Doughnuts Earned"),SingletonField 8 (StringValue "doughnuts"),SingletonField 14 (UInt16Value 18)]]
--- fielddefs: []
--- msgs: [DataM (LMT {unLmt = 0}) 206 [SingletonField 0 (UInt8Value 0),SingletonField 1 (UInt8Value 1),SingletonField 2 (UInt8Value 2),SingletonField 3 (StringValue "Heart Rate"),SingletonField 8 (StringValue "bpm"),SingletonField 15 (UInt8Value 3),SingletonField 14 (UInt16Value 20)]]
--- fielddefs: [DevFieldDef {dfdNum = FieldDefNum 1, dfdSize = 1, dfdDataIndex = DevDataIdx 0}]
-
 parseDataMessage :: MessageDefinition -> FitParser Message
 parseDataMessage (MessageDef lmt gmt arch fieldDefs devFieldDefs) = withArchitecture arch $ do
   fields <- mapM parseField fieldDefs
@@ -243,7 +243,7 @@ parseField (FieldDef num size bt) = do
 
   field <-
     if numValues == 1 || (bt == FitString)
-      then SingletonField num <$> parseValue bt
+      then SingletonField num <$> parseValue numValues bt
       else ArrayField num <$> parseArray numValues bt
 
   case field of
@@ -258,15 +258,15 @@ parseDevField (DevFieldDef fi@(FieldDefNum num) size ddi) = do
 
   field <-
     if numValues == 1 || (bt == FitString)
-      then SingletonField num <$> parseValue bt
+      then SingletonField num <$> parseValue num bt
       else ArrayField num <$> parseArray numValues bt
 
   case field of
     TimestampField t -> storeTimestamp (Timestamp t) >> return field
     _ -> return field
 
-parseValue :: BaseType -> FitParser Value
-parseValue bt =
+parseValue :: Int -> BaseType -> FitParser Value
+parseValue n bt =
   case bt of
     FitEnum -> EnumValue <$> word8
     FitSInt8 -> SInt8Value <$> int8
@@ -275,7 +275,7 @@ parseValue bt =
     FitUInt16 -> UInt16Value <$> archWord16
     FitSInt32 -> SInt32Value <$> archInt32
     FitUInt32 -> UInt32Value <$> archWord32
-    FitString -> StringValue <$> lift parseString
+    FitString -> StringValue <$> lift (parseString n)
     FitFloat32 -> Float32Value <$> archFloat32
     FitFloat64 -> Float64Value <$> archFloat64
     FitUInt8Z -> UInt8ZValue <$> word8
@@ -316,8 +316,13 @@ parseSeq :: Int -> FitParser a -> FitParser (Seq a)
 parseSeq n p = S.fromList <$> A.count n p
 
 -- | Parse a null-terminated UTF-8 string.
-parseString :: Parser Text
-parseString = decodeUtf8 <$> A.takeTill (== 0) <* A.anyWord8
+parseString :: Int -> Parser Text
+parseString n = decodeUtf8 <$> A.scan 0 go -- <* A.skip (== 0)
+  where
+    go :: Int -> Word8 -> Maybe Int
+    go size ch
+      | size < n && ch /= 0 = Just $ succ size
+      | otherwise = Nothing
 
 {- | Parse a compressed-timestamp message, using the 'TimeOffset' from the
  compressed-timestamp message header.
