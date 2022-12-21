@@ -51,17 +51,17 @@ newtype Messages = Messages
 
 -- | A FIT data message
 data Message = Message
-  { -- | The global message number, as found in the FIT profile
-    _mNumber :: !Int
-  , -- | The fields in the message, mapped from field number to 'Field'
-    _mFields :: IntMap Field
+  { _mNumber :: !Int
+  -- ^ The global message number, as found in the FIT profile
+  , _mFields :: IntMap Field
+  -- ^ The fields in the message, mapped from field number to 'Field'
   }
   deriving (Show)
 
 -- | A single field in a FIT data message
 data Field = Field
-  { -- | The field number, as found in the FIT profile
-    _fNumber :: !Int
+  { _fNumber :: !Int
+  -- ^ The field number, as found in the FIT profile
   , _fValue :: Value
   }
   deriving (Show)

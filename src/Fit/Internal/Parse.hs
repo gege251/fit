@@ -16,7 +16,8 @@ module Fit.Internal.Parse (
   -- * Parsers for components of FIT files
   parseHeader,
   parseMessages,
-  -- parseMessage,
+  parseMessageDefinition,
+  parseContent,
   parseMessageDef,
   parseFieldDef,
   parseDataMessage,
@@ -30,15 +31,20 @@ module Fit.Internal.Parse (
 ) where
 
 import Control.Applicative
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, void)
 import Control.Monad.Trans (lift)
 import Data.Attoparsec.ByteString (Parser, endOfInput)
-import qualified Data.Attoparsec.ByteString as A (anyWord8, parseOnly, runScanner, string, word8)
+import qualified Data.Attoparsec.ByteString as A (
+  anyWord8,
+  parseOnly,
+  runScanner,
+  string,
+  take,
+ )
 import qualified Data.Attoparsec.Combinator as A (count, many', manyTill')
 import Data.Bits (shiftR, testBit, (.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B (init)
-import Data.Functor (($>))
 import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
 import Data.Sequence (Seq)
@@ -119,19 +125,22 @@ parseHeader = withArchitecture ArchLittle $ do
 
   return $ FH headerSize protocolVersion profileVersion dataSize marker crc
 
+-- | Parse a list of FIT messages
 parseMessages :: FitParser [Message]
 parseMessages = mconcat <$> A.manyTill' parseMessageGroup (lift endOfInput)
 
+-- | Parse a message group consisting of a definition messages and multiple data messages
 parseMessageGroup :: FitParser [Message]
 parseMessageGroup = do
-  messageDef <- parseDefHeader
+  messageDef <- parseMessageDefinition
   msgs <- A.many' parseContent
 
   addDevFieldMsgs $ mapMaybe convertToDevDataMsg msgs
   pure $ DefM messageDef : msgs
 
-parseDefHeader :: FitParser MessageDefinition
-parseDefHeader = do
+-- | Parse a definition message
+parseMessageDefinition :: FitParser MessageDefinition
+parseMessageDefinition = do
   headerByte <- lift A.anyWord8
   let header = mkHeader headerByte
 
@@ -142,6 +151,7 @@ parseDefHeader = do
       pure msgDef
     _ -> fail "Not a def header"
 
+-- | Parse a data message
 parseContent :: FitParser Message
 parseContent = do
   headerByte <- lift A.anyWord8
@@ -260,7 +270,7 @@ parseDevField (DevFieldDef fi@(FieldDefNum num) size ddi) = do
 
   field <-
     if numValues == 1 || (bt == FitString)
-      then SingletonField num <$> parseValue num bt
+      then SingletonField num <$> parseValue numValues bt
       else ArrayField num <$> parseArray numValues bt
 
   case field of
@@ -327,16 +337,17 @@ parseSeq n p = S.fromList <$> A.count n p
 parseString :: Int -> Parser Text
 parseString n = do
   (result, size) <- A.runScanner 0 go
-  decodeUtf8
-    <$> ( if size == n
-            then pure result
-            else A.word8 0 $> result
-        )
+
+  -- Skip over all remaining NULL values from the designated space
+  void (A.take (n - size))
+  pure $ decodeUtf8 result
   where
+    -- \| Stop when a NULL is found or the size is reached
     go :: Int -> Word8 -> Maybe Int
     go size ch
-      | size < n && ch /= 0 = Just $ succ size
-      | otherwise = Nothing
+      | ch == 0 = Nothing
+      | size == n = Nothing
+      | otherwise = Just $ succ size
 
 {- | Parse a compressed-timestamp message, using the 'TimeOffset' from the
  compressed-timestamp message header.
