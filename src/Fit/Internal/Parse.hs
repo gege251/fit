@@ -293,10 +293,10 @@ parseValue n bt =
     FitUInt8Z -> UInt8ZValue <$> word8
     FitUInt16Z -> UInt16ZValue <$> archWord16
     FitUInt32Z -> UInt32ZValue <$> archWord32
+    FitByte -> ByteValue <$> word8
     FitSInt64 -> SInt64Value <$> archInt64
     FitUInt64 -> UInt64Value <$> archWord64
     FitUInt64Z -> UInt64ZValue <$> archWord64
-    FitByte -> ByteValue <$> word8
 
 {- | This function will fail if the 'BaseType' is 'FitString'. This implementation
  currently doesn't support arrays of strings, but treats char arrays as always
