@@ -129,6 +129,9 @@ fromSingletonValue v =
     FF.UInt8ZValue i -> IntValue (fromIntegral i)
     FF.UInt16ZValue i -> IntValue (fromIntegral i)
     FF.UInt32ZValue i -> IntValue (fromIntegral i)
+    FF.SInt64Value i -> IntValue (fromIntegral i)
+    FF.UInt64Value i -> IntValue (fromIntegral i)
+    FF.UInt64ZValue i -> IntValue (fromIntegral i)
     FF.ByteValue b -> ByteValue b
 
 fromArray :: FF.Array -> ArrayValue
@@ -146,6 +149,9 @@ fromArray a =
     FF.UInt8ZArray xs -> intArray xs
     FF.UInt16ZArray xs -> intArray xs
     FF.UInt32ZArray xs -> intArray xs
+    FF.SInt64Array xs -> intArray xs
+    FF.UInt64Array xs -> intArray xs
+    FF.UInt64ZArray xs -> intArray xs
     FF.ByteArray bs -> ByteArray . B.pack $ F.toList bs
   where
     intArray is = IntArray $ fmap fromIntegral is

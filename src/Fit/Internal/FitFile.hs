@@ -32,10 +32,10 @@ module Fit.Internal.FitFile (
 
 import Data.Bits (Bits, (.&.))
 import Data.ByteString (ByteString)
-import Data.Int (Int16, Int32, Int8)
+import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Sequence (Seq)
 import Data.Text (Text)
-import Data.Word (Word16, Word32, Word8)
+import Data.Word (Word16, Word32, Word64, Word8)
 import Fit.Internal.Architecture (Arch)
 
 -- | A FIT file consists of a header and a collection of messages.
@@ -184,6 +184,9 @@ data Value
   | UInt16ZValue !Word16
   | UInt32ZValue !Word32
   | ByteValue !Word8
+  | SInt64Value !Int64
+  | UInt64Value !Word64
+  | UInt64ZValue !Word64
   deriving (Show)
 
 {- | Array values use similar constructors to singleton values. However, there is no constructor
@@ -202,6 +205,9 @@ data Array
   | UInt8ZArray (Seq Word8)
   | UInt16ZArray (Seq Word16)
   | UInt32ZArray (Seq Word32)
+  | SInt64Array (Seq Int64)
+  | UInt64Array (Seq Word64)
+  | UInt64ZArray (Seq Word64)
   | ByteArray (Seq Word8)
   deriving (Show)
 
@@ -250,6 +256,9 @@ data BaseType
   | FitUInt8Z
   | FitUInt16Z
   | FitUInt32Z
+  | FitSInt64
+  | FitUInt64
+  | FitUInt64Z
   | FitByte
   deriving (Show, Eq)
 
@@ -269,4 +278,7 @@ btSize bt = case bt of
   FitUInt8Z -> 1
   FitUInt16Z -> 2
   FitUInt32Z -> 4
+  FitSInt64 -> 8
+  FitUInt64 -> 8
+  FitUInt64Z -> 8
   FitByte -> 1

@@ -48,8 +48,8 @@ import Data.Text.Encoding (decodeUtf8)
 import Data.Word (Word32, Word8)
 import Fit.Internal.Architecture (Arch (ArchBig, ArchLittle))
 import Fit.Internal.FitFile (
-  Array (ByteArray, EnumArray, Float32Array, Float64Array, SInt16Array, SInt32Array, SInt8Array, UInt16Array, UInt16ZArray, UInt32Array, UInt32ZArray, UInt8Array, UInt8ZArray),
-  BaseType (FitByte, FitEnum, FitFloat32, FitFloat64, FitSInt16, FitSInt32, FitSInt8, FitString, FitUInt16, FitUInt16Z, FitUInt32, FitUInt32Z, FitUInt8, FitUInt8Z),
+  Array (..),
+  BaseType (..),
   DevDataIdx (DevDataIdx),
   DevDataMsg (DevDataMsg),
   DevFieldDef (DevFieldDef),
@@ -64,7 +64,7 @@ import Fit.Internal.FitFile (
   MessageHeader (CTDataHeader, DataHeader, DefHeader),
   TimeOffset,
   Timestamp (Timestamp, unTimestamp),
-  Value (ByteValue, EnumValue, Float32Value, Float64Value, SInt16Value, SInt32Value, SInt8Value, StringValue, UInt16Value, UInt16ZValue, UInt32Value, UInt32ZValue, UInt8Value, UInt8ZValue),
+  Value (..),
   btSize,
   mkLocalMessageType,
   mkTimeOffset,
@@ -80,6 +80,7 @@ import Fit.Internal.FitParser (
   archInt64,
   archWord16,
   archWord32,
+  archWord64,
   int8,
   lookupDevField,
   lookupMessageDef,
@@ -194,9 +195,9 @@ toBaseType = \case
   0x8B -> pure FitUInt16Z
   0x8C -> pure FitUInt32Z
   0x0D -> pure FitByte
-  0x8E -> fail "New field format 0x8E: sint64"
-  0x8F -> fail "New field format 0x8F: uint64"
-  0x90 -> fail "New field format 0x90: uint64z"
+  0x8E -> pure FitSInt64
+  0x8F -> pure FitUInt64
+  0x90 -> pure FitUInt64Z
   invalid -> fail ("Invalid base type field: " ++ show invalid)
 
 {- | Specialised version of @toMessage@ to parse dev data messages only
@@ -282,6 +283,9 @@ parseValue n bt =
     FitUInt8Z -> UInt8ZValue <$> word8
     FitUInt16Z -> UInt16ZValue <$> archWord16
     FitUInt32Z -> UInt32ZValue <$> archWord32
+    FitSInt64 -> SInt64Value <$> archInt64
+    FitUInt64 -> UInt64Value <$> archWord64
+    FitUInt64Z -> UInt64ZValue <$> archWord64
     FitByte -> ByteValue <$> word8
 
 {- | This function will fail if the 'BaseType' is 'FitString'. This implementation
@@ -310,6 +314,9 @@ parseArray n bt =
         FitUInt8Z -> UInt8ZArray <$> seqOf word8
         FitUInt16Z -> UInt16ZArray <$> seqOf archWord16
         FitUInt32Z -> UInt32ZArray <$> seqOf archWord32
+        FitSInt64 -> SInt64Array <$> seqOf archInt64
+        FitUInt64 -> UInt64Array <$> seqOf archWord64
+        FitUInt64Z -> UInt64ZArray <$> seqOf archWord64
         FitByte -> ByteArray <$> seqOf word8
 
 -- | Run a 'FitParser' @n@ times to parse a 'Seq' of values
