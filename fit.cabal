@@ -49,7 +49,7 @@ library
   ghc-options:      -Wall
   build-depends:
     , attoparsec     >=0.13.2.3
-    , base           ^>=4.15.1.0
+    , base           >=4.15.1   && <5
     , bytestring
     , containers     >=0.5
     , contravariant
@@ -71,7 +71,7 @@ test-suite test-fit
   ghc-options:      -Wall
   build-depends:
     , attoparsec
-    , base              ^>=4.15.1.0
+    , base              >=4.15.1 && <5
     , bytestring
     , containers
     , fit

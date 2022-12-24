@@ -13,9 +13,10 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        compiler = "ghc924";
         pkgs = nixpkgs.legacyPackages.${system};
 
-        haskellPackages = pkgs.haskellPackages;
+        haskellPackages = pkgs.haskell.packages.${compiler};
 
         jailbreakUnbreak = pkg:
           pkgs.haskell.lib.doJailbreak (pkg.overrideAttrs (_: { meta = { }; }));
@@ -32,10 +33,11 @@
 
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
+            haskellPackages.ghc
             haskellPackages.haskell-language-server # you must build it with your ghc to work
-            cabal-install
+            haskellPackages.cabal-install
+            haskellPackages.hlint
             haskellPackages.fourmolu
-            hlint
           ];
           inputsFrom = builtins.attrValues self.packages.${system};
         };
