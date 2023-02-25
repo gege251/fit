@@ -216,7 +216,7 @@ toBaseType = \case
 -}
 convertToDevDataMsg :: Message -> Maybe DevDataMsg
 convertToDevDataMsg (DefM _) = Nothing
-convertToDevDataMsg (DataM _ gmt fields)
+convertToDevDataMsg (DataM _ gmt fields _)
   | gmt == 206 =
       let fieldMap = foldr go Map.empty fields
        in DevDataMsg
@@ -247,7 +247,7 @@ parseDataMessage :: MessageDefinition -> FitParser Message
 parseDataMessage (MessageDef lmt gmt arch fieldDefs devFieldDefs) = withArchitecture arch $ do
   fields <- mapM parseField fieldDefs
   devFields <- mapM parseDevField devFieldDefs
-  return (DataM lmt gmt (fields <> devFields))
+  return (DataM lmt gmt fields devFields)
 
 parseField :: FieldDef -> FitParser Field
 parseField (FieldDef num size bt) = do
@@ -358,7 +358,7 @@ parseCTDataMessage offset (MessageDef lmt gmt arch fieldDefs devFieldDefs) = wit
   devFields <- mapM parseDevField devFieldDefs
   newTimestamp <- updateTimestamp offset
   let timestampField = TimestampField (unTimestamp newTimestamp)
-  return $ DataM lmt gmt (timestampField : fields <> devFields)
+  return $ DataM lmt gmt (timestampField : fields) devFields
 
 -- | Transform a FIT message header byte into a 'MessageHeader'
 mkHeader :: Word8 -> MessageHeader

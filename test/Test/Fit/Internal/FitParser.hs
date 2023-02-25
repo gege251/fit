@@ -21,7 +21,7 @@ import Fit.Internal.FitParser (
   word8,
  )
 import Fit.Messages (readFileMessages)
-import Fit.Messages.Lens (field, message, real)
+import Fit.Messages.Lens (devField, message, real)
 import Test.Hspec (Spec, describe, it, runIO, shouldBe)
 import Test.Hspec.Attoparsec (shouldParse, (~>))
 import Test.QuickCheck hiding ((.&.))
@@ -84,5 +84,5 @@ goldenTests = describe "Golden tests" $ do
         <$> readFileMessages "test/data/Activity.fit"
 
   it "Can parse file with developer data" $
-    let doughnuts = activity ^.. message 18 ^? ix 0 . field 0 . real
+    let doughnuts = activity ^.. message 18 ^? ix 0 . devField 0 . real
      in doughnuts `shouldBe` Just 3.00083327293396

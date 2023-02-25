@@ -71,12 +71,12 @@ data FitHeader = FH
 -}
 data Message
   = DefM MessageDefinition
-  | DataM !LocalMessageType !Int [Field]
+  | DataM !LocalMessageType !Int [Field] [Field]
   deriving (Show)
 
 msgLmt :: Message -> LocalMessageType
 msgLmt (DefM (MessageDef lmt _ _ _ _)) = lmt
-msgLmt (DataM lmt _ _) = lmt
+msgLmt (DataM lmt _ _ _) = lmt
 
 {- | Field description messages define the meaning of data within a dev field, a FIT file can
  contain up to 255 unique fields per developer. These messages must occur in the file before

@@ -58,6 +58,8 @@ data Message = Message
   -- ^ The global message number, as found in the FIT profile
   , _mFields :: IntMap Field
   -- ^ The fields in the message, mapped from field number to 'Field'
+  , _mDevFields :: IntMap Field
+  -- ^ The developer fields in the message, mapped from field number to 'Field'
   }
   deriving (Show)
 
@@ -107,7 +109,7 @@ toMessages rFit = (Messages . S.fromList) (mapMaybe toMessage (FF.fMessages rFit
 
 toMessage :: FF.Message -> Maybe Message
 toMessage (FF.DefM _) = Nothing
-toMessage (FF.DataM _ gmt fields) = Just $ Message gmt (foldr go Map.empty fields)
+toMessage (FF.DataM _ gmt fields devFields) = Just $ Message gmt (foldr go Map.empty fields) (foldr go Map.empty devFields)
   where
     getNum (FF.SingletonField num _) = num
     getNum (FF.ArrayField num _) = num
