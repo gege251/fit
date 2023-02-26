@@ -24,6 +24,7 @@ module Fit (
   messageNumber,
   fields,
   field,
+  devField,
   fieldNumber,
   fieldValue,
   int,

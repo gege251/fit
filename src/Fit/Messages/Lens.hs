@@ -25,7 +25,9 @@ module Fit.Messages.Lens (
 
   -- * Fields
   fields,
+  devFields,
   field,
+  devField,
   fieldNumber,
   fieldValue,
 
@@ -52,7 +54,7 @@ import Data.Word (Word8)
 import Fit.Messages (
   ArrayValue (ByteArray, IntArray, RealArray),
   Field (Field, _fNumber, _fValue),
-  Message (Message, _mFields, _mNumber),
+  Message (Message, _mDevFields, _mFields, _mNumber),
   Messages (Messages, _messages),
   SingletonValue (ByteValue, IntValue, RealValue, TextValue),
   Value (Array, Singleton),
@@ -94,8 +96,16 @@ messageNumber f m = (\n -> m {_mNumber = n}) <$> f (_mNumber m)
  @fields :: Traversal' Message Field@
 -}
 fields :: Applicative f => (Field -> f Field) -> Message -> f Message
-fields f (Message n flds) = Message n <$> traverse f flds
+fields f (Message n flds devFlds) = (\flds' -> Message n flds' devFlds) <$> traverse f flds
 {-# INLINE fields #-}
+
+{- | Traverse all the developer fields in a 'Message'
+ -
+ @devFields :: Traversal' Message Field@
+-}
+devFields :: Applicative f => (Field -> f Field) -> Message -> f Message
+devFields f (Message n flds devFlds) = Message n flds <$> traverse f devFlds
+{-# INLINE devFields #-}
 
 {- | A Fold over the fields in a 'Message' with the given field number
 
@@ -106,6 +116,16 @@ field n f msg = coerce (traverse f targetFields)
   where
     targetFields = Map.filterWithKey (\k _ -> k == n) (_mFields msg)
 {-# INLINE field #-}
+
+{- | A Fold over the developer fields in a 'Message' with the given field number
+
+ @devField :: Int -> Fold Message Field@
+-}
+devField :: (Contravariant f, Applicative f) => Int -> (Field -> f Field) -> Message -> f Message
+devField n f msg = coerce (traverse f targetFields)
+  where
+    targetFields = Map.filterWithKey (\k _ -> k == n) (_mDevFields msg)
+{-# INLINE devField #-}
 
 {- | Lens on the field number from a 'Field'
 
